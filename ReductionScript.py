@@ -11,13 +11,13 @@ import time
 Carmenes_Aframes = glob.glob('HD209_NIR_data/*nir_A.fits')
 
 #file name of the model atmosphere 
-modelAtm = ascii.read('modelAtm_HD209_H2O.dat')
+modelAtm = ascii.read('modelAtm_HD209_H2O_VMR-5.dat')
 
 starName = 'HD209'
 
 spectralRes = 80000 #spectral resolution (CARMENES NIR = 80000)
 
-waveRange = [10000, 12000] # in angstroms
+waveRange = [9300, 12000] # in angstroms
 
 planetRotVel = 2.0
 
@@ -46,7 +46,7 @@ start_time = time.time()
 
 #open the model atmosphere file and extract the data
 modelWave = modelAtm['Wavelength']*10**4
-modelWave_broad, modelRad_broad = prepareModel(modelWave, modelAtm['Radius'], SpectralRes, planetRotVel, waveRange)
+modelWave_broad, modelRad_broad = prepareModel(modelWave, modelAtm['Radius'], spectralRes, planetRotVel, waveRange)
 modelTrans_broad = 1 - ((modelRad_broad * 6.9911*10**7)**2 / (StellarRad * 6.9634*10**8)**2 )
 modelTrans = 1 - ((modelAtm['Radius'] * 6.9911*10**7)**2 / (StellarRad * 6.9634*10**8)**2 )
 
@@ -59,7 +59,10 @@ obsTimesUT = []
 phases = []
 rvs = []
 MJDs = []
-vbar = []
+BJDs = []
+vbars = []
+SNRs = []
+airmasses = []
 
 #open fits files and extract the necessary information 
 for i in range(len(Carmenes_Aframes)):
@@ -100,7 +103,7 @@ for i in range(len(Carmenes_Aframes)):
     airmasses.append(airmass)
 
     #correct for the barycentric velocity etc.
-    vbar.append(vbar)
+    vbars.append(vbar)
     restWave = waves / (((-vbar + vsys)/(2.998*10**5)) + 1)
     restWaves.append(restWave)
 
@@ -147,9 +150,9 @@ flux_wSignal = np.asarray(flux_wSignal)
 
 #do the reduction
 if inject == True: 
-    rv_grid, cc_grid = doTheReduction(t['waves'], flux_wSignal, modelWave_broad, modelTrans_broad, 8, t['phases'], plots=False)
+    rv_grid, cc_grid = doTheReduction(t['waves'], flux_wSignal, modelWave_broad, modelTrans_broad, 8, t, transitIndices, plots=False)
 else:
-    rv_grid, cc_grid = doTheReduction(t['waves'], t['fluxes'], modelWave_broad, modelTrans_broad, 12, t['phases'], plots=False)
+    rv_grid, cc_grid = doTheReduction(t['waves'], t['fluxes'], modelWave_broad, modelTrans_broad, 8, t, transitIndices, plots=False)
 
 #shift the cross correlations into the planet's rest frame
 new_rv_grid, rest_ccs = shiftXcorl(rv_grid, cc_grid, t['rvs'])

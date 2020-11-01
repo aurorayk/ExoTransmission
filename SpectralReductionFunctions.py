@@ -6,10 +6,8 @@ import pdb
 import matplotlib.cm as cm
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import interp1d
-from readOpacityFile import *
 from scipy.signal import correlate
 from astropy.table import Table
-from sysrem import *
 from PyAstronomy import pyasl
 from scipy import signal
 from astropy.convolution import Gaussian1DKernel, convolve
@@ -112,9 +110,29 @@ def removeVertOutliers(AframeFluxes):
     
     return clippedFluxes
 
+def normalize(flux):
+    
+    normFlux = np.zeros(flux.shape)
+    for i in range(len(flux)):
+        meanF = np.nanmean(flux[i])
+        normF = flux[i]/meanF
+        normFlux[i] = normF
+    
+    return normFlux
+
+def normalizeSig(flux, sigmas):
+    
+    normSig = np.zeros(flux.shape)
+    for i in range(len(flux)):
+        meanF = np.nanmean(flux[i])
+        normS = sigmas[i]/meanF
+        normSig[i] = normS
+    
+    return normSig
+
+
 
 def remove5sOutliers(AframeFluxes, AframeWaves, AframeSigmas):
-
 
     for i in range(len(AframeFluxes)):
 
@@ -130,58 +148,9 @@ def remove5sOutliers(AframeFluxes, AframeWaves, AframeSigmas):
         distMean = np.abs(AframeFluxes[i] - medianAframe)
         sigmaPoints = np.where( distMean > 3*stdAframe)
 
-        #try instead a boxcar filter type of thing
-        #boxcarSigmas = []
-        #for k in range(int(len(AframeFluxes[0])/100) - 50 ):
-        #    lowerIndex = k*100
-        #    upperIndex = k*100+50
-        #    stdA = np.nanstd(AframeFluxes[i][lowerIndex:upperIndex])
-        #    medianA = np.nanmedian(AframeFluxes[i][lowerIndex:upperIndex])
-        #    dist = np.abs(AframeFluxes[i][lowerIndex:upperIndex] - medianA)
-        #    sigmas = np.where(dist > 3*stdA)[0] + k
-        #    boxcarSigmas.append(sigmas)
-
-        #boxcarSigmas = np.concatenate(boxcarSigmas, axis=0)
-        #boxcarSigmas = list(set(boxcarSigmas))
-        #boxcarSigmas.sort()
-        #boxcarSigmas = np.asarray(boxcarSigmas)
-
-        #try instead all the points with high uncertainties
-        #fit a polynomial function to the shape
-        #uncertFunc = np.polynomial.Chebyshev.fit(AframeWaves, AframeSigmas[i], 4)
-        #smoothSigma = AframeSigmas[i]/uncertFunc(AframeWaves)
-        #meanSig = np.nanmedian(smoothSigma)
-        #stdSig = np.nanstd(smoothSigma)
-        #distMeanSig = smoothSigma - meanSig
-        #badSigPoints = np.where( distMeanSig > 3*stdSig)
-        #add in points one to the right and one to the left
-        #badSigPoints_new = np.concatenate((badSigPoints[0], badSigPoints[0] - 1 , badSigPoints[0] + 1))
-        #badSigPoints_new = list(set(badSigPoints_new))
-        #badSigPoints_new.sort()
-        #if 4080 in badSigPoints_new:
-        #    badSigPoints_new = badSigPoints_new[0:-1]
-        #badSigPoints_new = np.asarray(badSigPoints_new)
-
-        #plot to check it out
-        #plt.plot(AframeWaves, AframeFluxes[i])
-        #if len(sigmaPoints[0]) > 0:
-        #    plt.scatter(AframeWaves[sigmaPoints[0]], AframeFluxes[i][sigmaPoints[0]], color='r')
-        #if len(boxcarSigmas) > 0:
-        #    plt.scatter(AframeWaves[boxcarSigmas], AframeFluxes[i][boxcarSigmas], color='g')
-        #if len(badSigPoints[0]) > 0:
-        #    plt.scatter(AframeWaves[badSigPoints[0]], AframeFluxes[i][badSigPoints[0]], color='c')
-            #plt.show()
         correctedFluxes = AframeFluxes
         if len(sigmaPoints) > 0: 
             correctedFluxes[i][sigmaPoints] = 1.0
-        #if len(badSigPoints[0]) > 0: 
-        #    correctedFluxes[i][badSigPoints[0]] = np.nan
-
-        #interpolate over the nans instead of just leaving them
-        #nans, x = nan_helper(correctedFluxes[i])
-        #correctedFluxes[i][nans] = np.interp(x(nans), x(~nans), correctedFluxes[i][~nans])
-        #plt.plot(AframeWaves, correctedFluxes[i])
-        #plt.show()
         
     return correctedFluxes
 
@@ -406,17 +375,10 @@ def shiftXcorl(rvGrid, ccGrid, rv):
     return rvGrid_shifted, restCCs
 
 ###############
-def flattenXcorlwModel(cc, transitModel):
-
-    weighted_cc = []
-    weight_factor = np.sum((1 - transitModel))
-    for i in range(len(cc)):
-        
-        weighted_cc1 = cc[i] * (1-transitModel[i]) * weight_factor
-        weighted_cc.append(weighted_cc1)
-        
-    combined_ccs = np.sum(weighted_cc, axis=0)
-
+def flattenXcorl(cc):
+    
+    combined_ccs = np.sum(cc, axis=0)
+    
     return combined_ccs
 
 
@@ -526,7 +488,7 @@ def prepareModel(model_atm_wave, model_atm_trans, R, vsini, wave_range):
 #get out:
 #radial velocity grid and cross correlation grid between the model and observations after full reduction
 ####################
-def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysrem_its, table, transitIndices, error_array=None, plots=False, tellurics='PCA', removed=False):
+def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_its, table, transitIndices, error_array=None, plots=False):
 
     if isinstance(error_array, type(None)):
         error_array = 0.1*flux_array
@@ -553,27 +515,22 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
 
     interp_flux_grid = np.asarray(interp_flux_grid)
     interp_sigma_grid = np.asarray(interp_sigma_grid)
-    #pdb.set_trace()
-    #wave = Table([wave_grid], names=['Wavelength'])
-    #ascii.write(wave, 'TauBoo_waves.txt')
 
-    #normalize the data
+    #STEP 1:normalize the data
+    #######
     norm_fluxes = normalize(interp_flux_grid)
     norm_sigmas = normalizeSig(interp_flux_grid, interp_sigma_grid)
     
-    #do a 3 sigma clipping along each spectrum (vertical array direction)
+    #STEP 2: do a 3 sigma clipping along each spectrum (vertical array direction)
     vert_sigma_clip1 = removeVertOutliers(norm_fluxes)
     vert_sigma_clip1[:, 507076:516355] = 1.0
 
-    #removed the blaze function
+    #STEP 4: removed the blaze function
     blaze_removed = []
     for i in range(len(vert_sigma_clip1)):
-        #test = convolve(vert_sigma_clip1[i], np.ones(80001), 'extend')
-        #test2 = signal.savgol_filter(vert_sigma_clip1[i], 80001, 2)
-        poly = np.polyfit(wave_grid, vert_sigma_clip1[i], 6)
+        poly = np.polyfit(wave_grid, vert_sigma_clip1[i], 3)
         test4 = np.poly1d(poly)
         blaze_removed.append(vert_sigma_clip1[i]/test4(wave_grid))
-        #pdb.set_trace()
     blaze_removed = np.asarray(blaze_removed) 
 
     #see how the clipping removal went
@@ -584,39 +541,8 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
         plt.show()
     
 
-    #blaze_removed = removeBlazeFunction(wave_grid, interp_flux_grid)
-
-    ##See if there is a stability issue in the wavelength solutions over the course of the night
-    #if plots == True: 
-    #    model = ascii.read('BTmodels/lte060-4.0-0.0a+0.0.BT-Settl_Carmenes.txt')
-    #    medSpacing = np.median(np.diff(model['wave']))
-    #    newModelWave = np.arange(model['wave'][0], model['wave'][-1], medSpacing)
-    #    modelSpl = interp1d(model['wave'], model['flux'])
-    #    newModelFlux = modelSpl(newModelWave)
-    #    broad_flux = pyasl.rotBroad(newModelWave, newModelFlux/np.mean(newModelFlux), 0.6, 10.0)
-    #    rv_g, cc = crossCorrelate(wave_grid, interp_flux_grid, newModelWave, broad_flux)
-    #    rv_shift = []
-    #    for i in range(len(cc)):
-    #        plt.plot(rv_g, cc[i]/np.mean(cc[i]), color = colors[i])
-            #plt.plot(newModelWave / ((rv_g[i]/(2.998*10**5)) + 1), broad_flux, color = colors[i])
-    #        rv_shift.append(rv_g[np.argmax(cc[i])])
-    #    plt.show()
-    #    plt.scatter(np.arange(0,len(rv_shift), 1), rv_shift)
-    #    plt.show()
-        #pdb.set_trace()
-
-    #Save a fits file with the data
-    #hdu = fits.PrimaryHDU(norm_fluxes)
-    #hdu1 = fits.HDUList([hdu])
-    #hdu1.writeto('WASP76_cleaned_new.fits')
-
-    #get rid of the stellar signal (the stationary signal)
-    star_removed = removeHostStarOutTransit(blaze_removed, table['SNR'], transitIndices)
-    #star_removed = removeHostStar(blaze_removed)
-    #pdb.set_trace()
-
-    #star_removed[:, 78660:86000] = 1.0
-    #star_removed[:, 229320:250000] = 1.0
+    #STEP 5: get rid of the stellar signal (the stationary signal)
+    star_removed = removeHostStar(blaze_removed)
     star_removed[:, 507076:516355] = 1.0
 
     colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
@@ -626,48 +552,12 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
         plt.title('star_removed') 
         plt.show()
 
-    #ho_sig_removed = remove5sOutliers(star_removed, wave_grid, star_removed)
     for k in range(len(star_removed)):
         nans, x = nan_helper(star_removed[k])
         star_removed[k][nans] = np.interp(x(nans), x(~nans), star_removed[k][~nans])
-        
-    #running standard deviation clipping
-    std_masked = np.ones_like(star_removed)
-    mask_length = []
-    for i in range(100):
-        #pdb.set_trace()
-        #if wave_grid[i*8932] > 6260:
-        #    pdb.set_trace()
-        part_cols = star_removed[:, i*8932:(i+1)*8932]
-        std_cols = np.std(part_cols, axis=0)
-        mask = np.where(std_cols > 5*np.nanmean(std_cols))
-        mask_length.append(len(mask))
-        part_cols[:, mask] = 1.0
-        std_masked[:, i*8932:(i+1)*8932] = part_cols
-    #pdb.set_trace()
-    print("percent of values masked", np.sum(mask_length)/len(star_removed[0]))
 
-    #Try a gaussian filter with a sigma ~1.5 A like in Yan 2019, corresponds to ~225 pixels
-    gauss_smoothed = []
-    for i in range(len(star_removed)):
-        #test = convolve(star_removed[i], np.ones(251), 'extend')
-        filt = gaussian_filter1d(star_removed[i], 325)
-        smooth = star_removed[i]/filt
-        #filt2 = gaussian_filter1d(smooth, 1225)
-        #smooth2 = smooth/filt2
-        gauss_smoothed.append(smooth)
-        #filt = signal.savgol_filter(star_removed[i], 2001, 2)
-        #gauss_smoothed.append(star_removed[i]/filt)
-        #pdb.set_trace()
-    gauss_smoothed = np.asarray(gauss_smoothed)
 
-   
-    #Save a fits file with the data
-    #hdu = fits.PrimaryHDU(blaze_removed)
-    #hdu3 = fits.HDUList([hdu])
-    #hdu3.writeto('WASP76_starRemoved_new.fits')
-
-    vert_sigma_clip = removeVertOutliers(gauss_smoothed)
+    vert_sigma_clip = removeVertOutliers(star_removed)
 
     colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
     if plots == True: 
@@ -675,59 +565,21 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
             plt.plot(vert_sigma_clip[j], color = colors[j])
         plt.title('star_removed + sigma clipped') 
         plt.show()
-    #std_cols = np.std(vert_sigma_clip, axis=0)
-    #std_array = np.tile(1/std_cols,(70,1))
-    #downweight areas with large standard deviation
-    #downweighted = divideByStd(vert_sigma_clip)
-    #downweighted[:, 507076:516355] = 1.0
-    #downweighted2 = weightBySNR(downweighted)
-    #tell_removed = removeTellurics(vert_sigma_clip)
+
+    #STEP 6: downweight by the standard deviation
     downweighted = divideByStd(vert_sigma_clip)
     downweighted[:, 507076:518200] = 1.0
-    #downweighted[:, mask] = 1.0
 
     #make sure there are no nans
     for k in range(len(downweighted)):
         nans, x = nan_helper(downweighted[k])
         downweighted[k][nans] = np.interp(x(nans), x(~nans), downweighted[k][~nans])
 
-    #for Brogi&Line log likelihood you cannot weight by the std 
-    if tellurics == 'PCA' or tellurics == 'pca':
-        if removed == False: 
-            pca_removed, trash1, trash2 = pca(downweighted, sysrem_its)
-        elif removed == True:
-            trash, pca_removed, trash2 = pca(downweighted, sysrem_its)
-    elif tellurics == 'SYSREM' or tellurics == 'sysrem':
-        if removed == False:
-            pca_removed, trash1, trash2 = sysrem(downweighted, std_array, 100, sysrem_its)
-        elif removed == True:
-            trash, pca_removed, trash2 = sysrem(downweighted, std_array, 100, sysrem_its)
-    elif tellurics == 'MASK' or tellurics == 'mask':
-        if removed == False:
-            std_cols = np.std(vert_sigma_clip, axis=0)
-            mask = np.where(std_cols > 1.4*np.mean(std_cols))
-            print(len(mask[0])/len(std_cols))
-            vert_sigma_clip[:, mask] = 1.0
-            pca_removed, trash, trash1 = pca(vert_sigma_clip, 8) 
-        elif removed == True:
-            std_cols = np.std(vert_sigma_clip, axis=0)
-            mask = np.where(std_cols < 1.4*np.mean(std_cols))
-            vert_sigma_clip[:, mask] = 1.0
-            trash, pca_removed, trash1 = pca(vert_sigma_clip, 8)
-    elif tellurics == 'none':
-        pca_removed = downweighted
-    else:
-        print('tellurics only takes as input sysrem or pca')
-    #try sysrem instead of pca
-    #sysrem_removed, trash1, trash2 = sysrem(downweighted, vert_sigma_clip*0.1, 100, sysrem_its)
-    #trash, trash1, sysrem_removed = sysrem(downweighted, vert_sigma_clip*0.1, 100, sysrem_its)
-    #sysrem_removed = sysrem_removed[-1]
+    #STEP 7: remove PCA iterations
+    pca_removed, trash1, trash2 = pca(downweighted, pca_its)
 
-
-    #do a 3 sigma clipping for each pixel at the same wavelength
-    #ho_sigma_clip = remove5sOutliers(star_removed, wave_grid, interp_sigma_grid)
+    #STEP 8: one more sigma clipping
     vert_sigma_clip2 = removeVertOutliers(pca_removed)
-    #vert_sigma_clip2[:, mask] = 1.0
 
     #remove any shape that appeared in the areas with no data
     vert_sigma_clip2[:, 507076:518200] = 1.0
@@ -736,10 +588,6 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
     if plots == True: 
         colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
         for j in range(len(flux_array)):
-            if j in [64,65,66,67]:
-                alpha=1.0
-            else:
-                alpha=0.5
             plt.plot(vert_sigma_clip2[j], color = colors[j], alpha=alpha)
             plt.title('final sig clip') 
         plt.show()
@@ -771,62 +619,18 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, sysr
         ax1.set_aspect(350)
         ax2.set_aspect(350)
         ax3.set_aspect(350)
-        #plt.savefig('ExampleReduction_KELT20.pdf') 
-       # plt.title('divide by std') 
         plt.show()
-        #pdb.set_trace()
-
-    #hdu2 = fits.PrimaryHDU(vert_sigma_clip2)
-    #hdu2 = fits.HDUList([hdu2])
-    #hdu2.writeto('TauBoo_pca10_inject.fits')
-    
-    #plot up the reduction steps if plots == True
-    #if plots == True:
-    #    fig, axes = plt.subplots(3,1)
-    #    init_image = np.zeros((len(flux_array)*10, len(star_removed[0])))
-    #    norm_image = np.zeros((len(flux_array)*10, len(star_removed[0])))
-    #    final_image = np.zeros((len(flux_array)*10, len(star_removed[0])))
-    #    for i in range(len(flux_array)):
-    #        lower_index = (i+1)*10 - 10
-    #        upper_index = (i+1)*10 
-    #        init_image[lower_index:upper_index] = flux_array[i,:]
-    #        norm_image[lower_index:upper_index] = norm_fluxes[i, :]
-    #        final_image[lower_index:upper_index] = vert_sigma_clip[i, :]
-    #    im = axes[0].imshow(init_image, cmap=cm.gray, extent=[min(wave), max(wave),0, len(flux_array)])
-    #    axes[1].imshow(norm_image, cmap=cm.gray, extent=[min(wave), max(wave),0, len(flux_array)])
-    #    axes[2].imshow(final_image, cmap=cm.gray, extent=[min(wave), max(wave),0, len(flux_array)])
-    #    axes[2].set_xlabel('Wavelength (A)')
-    #    axes[1].set_ylabel('Spectrum Number') 
-    #    plt.show()
-    #    pdb.set_trace()
-       
-
-    
-        
 
     #cross correlate the model atm with the data
     rv_grid, cc_grid = crossCorrelate(wave_grid, vert_sigma_clip2, model_atm_wave, model_atm_trans)
     rv_grid = np.asarray(rv_grid)
     cc_grid = np.asarray(cc_grid)
 
-
     #rv grid goes in wrong direction, flip it
     if rv_grid[0] > rv_grid[1]:
         rv_grid = rv_grid[::-1]
         for c in range(len(cc_grid)):
             cc_grid[c] = cc_grid[c][::-1]
-
-    #pdb.set_trace()
-    #Try Brogi&Line log likihood approach
-    log_likelihood_grid = np.zeros_like(cc_grid)
-    std_model = np.std(model_atm_trans)
-    num_spec_channels = len(wave_grid)/5 #wave grid is 0.2 km/s but CARMENES real resolution is about 1.3 km/s so dividing by 6 is a good guess
-    for i in range(len(cc_grid)):
-
-        std_data = np.std(vert_sigma_clip2[i])
-        #print(std_data)
-        log_likelihood = LogLikelihood(cc_grid[i], std_model, std_data, num_spec_channels)
-        log_likelihood_grid[i] = log_likelihood
 
     #return the normalized cc grid and the rv grid
     return rv_grid, cc_grid
