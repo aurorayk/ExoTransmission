@@ -8,10 +8,10 @@ import time
 
 #EDIT THESE LINES #############
 ##Directory where all the data is stored 
-Carmenes_Aframes = glob.glob('Data/HD209458_Carmenes/*nir_A.fits')
+Carmenes_Aframes = glob.glob('HD209_NIR_data/*nir_A.fits')
 
 #file name of the model atmosphere 
-modelAtm = ascii.read('/Users/aurora/Dropbox/MetalHydrideTests/petitRADTRANS-master/modelAtm_HD209_H2O.dat')
+modelAtm = ascii.read('modelAtm_HD209_H2O.dat')
 
 starName = 'HD209'
 
