@@ -2,7 +2,7 @@ from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import interp1d
 from scipy.signal import correlate
 from astropy.table import Table
-from SpectralReduction import *
+from SpectralReductionFunctions import *
 import time
 
 
