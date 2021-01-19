@@ -13,11 +13,11 @@ from scipy import signal
 from astropy.convolution import Gaussian1DKernel, convolve
 from scipy.ndimage import gaussian_filter1d
 
-
-#Try a simple removal of the host star's spectrum by simply dividing by the
-#average of all the A frame data in time (since host star is stationary)
-#AframeFluxes is an array with all the time series spectra in position 1, then all the orders in 2, and all the pixels in 3
-#pass in the orders you want to do this on
+####################
+#Simple removal of the host star's spectrum by simply dividing by the
+#average of all the fluxes in time (since host star is stationary)
+#AframeFluxes is an array with all the time series spectra in position 1 and all the pixels in 2
+####################
 def removeHostStar(AframeFluxes):
 
     Aframes_noStar = np.zeros(AframeFluxes.shape)
@@ -31,10 +31,13 @@ def removeHostStar(AframeFluxes):
     
     return Aframes_noStar
 
-def removeHostStarOutTransit(AframeFluxes, SNRs, indices):
+####################
+#instead divide by only average spectra that are not taken during transit
+#Need to use this function if the element/molecule is in the stellar spectrum as well (will cause doppler shadow)
+####################
+def removeHostStarOutTransit(AframeFluxes, indices):
     Aframes_noStar = np.zeros(AframeFluxes.shape)
     out_of_transit = np.concatenate((AframeFluxes[0:indices[0]] , AframeFluxes[indices[1]:]), axis=0)
-    out_of_transit_SNR = np.concatenate((SNRs[0:indices[0]] , SNRs[indices[1]:]), axis=0)
     meanAframes = np.nanmedian(out_of_transit, axis=0)
     for j in range(len(AframeFluxes)):
         #mean of all the time series out of transit
@@ -45,27 +48,10 @@ def removeHostStarOutTransit(AframeFluxes, SNRs, indices):
     
     return Aframes_noStar
 
-def removeTellurics(AframeFluxes):
-
-    tellcor = np.zeros(AframeFluxes.shape)
-    for i in range(len(AframeFluxes[0])):
-        #mean of all the time series out of transit
-        #Fout_list = np.concatenate((AframeFluxes[:transitIndices[0]], AframeFluxes[transitIndices[1]:]) )
-        column_values = AframeFluxes[:, i]
-        spec_num = np.arange(0, len(AframeFluxes), 1)
-         
-        poly = np.polyfit(spec_num, column_values, 2)
-        test = np.poly1d(poly)
-        #spl = UnivariateSpline(wave, flux[i], w = weights_mask, s=1)
-        #plt.plot(spec_num, column_values)
-        #plt.plot(spec_num, test(spec_num))
-        #plt.plot(spec_num, column_values/ test(spec_num))
-        #plt.show()
-        #correctedFlux[i] = flux[i]/spl(wave)
-        tellcor[:,i] = column_values/test(spec_num)
-    
-    return tellcor
-
+####################
+#Function to weight each pixel by the standard deviation in time - should downweight noisy edge pixels or pixels with telluric residuals, etc. 
+#Good to increase the signal, but don't use if trying to get out physical parameters like residual amplitude/ Radius of planet
+####################
 def divideByStd(AframeFluxes):
 
     newFluxes = np.zeros(AframeFluxes.shape)
@@ -77,6 +63,10 @@ def divideByStd(AframeFluxes):
     
     return newFluxes
 
+####################
+#Function to weight the spectra by their signal to noise ratio so that the noisiest spectra don't contribute the most
+#Good to increase the signal, but don't use if trying to get out physical parameters like residual amplitude/ Radius of planet
+####################
 def weightBySNR(AframeFluxes):
 
     weightedFluxes = np.zeros(AframeFluxes.shape)
@@ -87,7 +77,9 @@ def weightBySNR(AframeFluxes):
 
     return weightedFluxes
 
-
+####################
+#Sigma clipping in the time direction. Now set to 5 sigma clipping - but could go more stringent to 4 sigma
+####################
 def removeVertOutliers(AframeFluxes):
 
     for i in range(len(AframeFluxes[0])):
@@ -96,7 +88,7 @@ def removeVertOutliers(AframeFluxes):
         meanFlux = np.nanmedian(AframeFluxes[:,i])
         stdFlux = np.std(AframeFluxes[:,i])
         distMean = np.abs(AframeFluxes[:,i] - meanFlux)
-        badSigmas = np.where(distMean > 3*stdFlux)
+        badSigmas = np.where(distMean > 5*stdFlux)
         clippedFluxes = AframeFluxes 
         if len(badSigmas[0]) > 0:
             #make the outlier the mean value
@@ -130,8 +122,10 @@ def normalizeSig(flux, sigmas):
     
     return normSig
 
-
-
+####################
+#remove 5 sigma outliers but in the wavelength direction this time
+#tried a few different ways to do this
+####################
 def remove5sOutliers(AframeFluxes, AframeWaves, AframeSigmas):
 
     for i in range(len(AframeFluxes)):
@@ -154,7 +148,9 @@ def remove5sOutliers(AframeFluxes, AframeWaves, AframeSigmas):
         
     return correctedFluxes
 
+####################
 #remove any residual shape to the spectral orders
+####################
 def removeBlazeFunction(wave, flux):
 
 
@@ -338,6 +334,8 @@ def injectPlanetSignal(wave, flux, injectWave, injectTrans, rv):
     return flux_wSignal
 
 ###############
+#calculates the signal to noise ratio of a 1 dimensional flattened cross correlation function
+####################
 def calculateSNR(rv, cc, cc_injected=[]):
 
     #subtract the two
@@ -358,6 +356,8 @@ def calculateSNR(rv, cc, cc_injected=[]):
     return SNR
 
 ##############
+#shifts a 2 dimensional cross correlation function to a desired radial velocity
+####################
 def shiftXcorl(rvGrid, ccGrid, rv):
     
     restCCs = []
@@ -375,6 +375,7 @@ def shiftXcorl(rvGrid, ccGrid, rv):
     return rvGrid_shifted, restCCs
 
 ###############
+#
 def flattenXcorl(cc):
     
     combined_ccs = np.sum(cc, axis=0)
@@ -400,12 +401,14 @@ def nan_helper(y):
     return np.isnan(y), lambda z: z.nonzero()[0]
 
 #################
+#Convolve to a given resolution 
+#################
 def convolveToR(wavelengths, fluxes, R):
 
     fluxes = np.asarray(fluxes) 
     deltaWave = np.mean(wavelengths)/ R
     newWavelengths = np.arange(wavelengths[0], wavelengths[-1], deltaWave)
-    fwhm = deltaWave / (wavelengths[1] - wavelengths[0])
+    fwhm = deltaWave / np.mean(wavelengths[1:] - wavelengths[0:-1])
     std = fwhm / ( 2.0 * np.sqrt( 2.0 * np.log(2.0) ) ) #convert FWHM to a standard deviation
     g = Gaussian1DKernel(stddev=std)
     #2. convolve the flux with that gaussian
@@ -417,6 +420,8 @@ def convolveToR(wavelengths, fluxes, R):
 
     return newWavelengths, newFluxes
 
+#################
+#rotationally broaden the planet's spectrum
 #################
 def planetVsini(wave, flux, vsini):
 
@@ -523,9 +528,9 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_
     
     #STEP 2: do a 3 sigma clipping along each spectrum (vertical array direction)
     vert_sigma_clip1 = removeVertOutliers(norm_fluxes)
-    vert_sigma_clip1[:, 507076:516355] = 1.0
+    #vert_sigma_clip1[:, 507076:516355] = 1.0 #sky emission line
 
-    #STEP 4: removed the blaze function
+    #STEP 4: removed the blaze function by fitting a polynomial
     blaze_removed = []
     for i in range(len(vert_sigma_clip1)):
         poly = np.polyfit(wave_grid, vert_sigma_clip1[i], 3)
@@ -542,23 +547,13 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_
     
 
     #STEP 5: get rid of the stellar signal (the stationary signal)
-    star_removed = removeHostStar(blaze_removed)
-    star_removed[:, 507076:516355] = 1.0
+    star_removed = removeHostStar(blaze_removed) 
+    #star_removed[:, 507076:516355] = 1.0 #sky emission line
 
-    colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
-    if plots == True: 
-        for j in range(len(flux_array)):
-            plt.plot(star_removed[j], color = colors[j])
-        plt.title('star_removed') 
-        plt.show()
-
-    for k in range(len(star_removed)):
-        nans, x = nan_helper(star_removed[k])
-        star_removed[k][nans] = np.interp(x(nans), x(~nans), star_removed[k][~nans])
-
-
+    #do another sigma clipping 
     vert_sigma_clip = removeVertOutliers(star_removed)
-
+    
+    #plot to check
     colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
     if plots == True: 
         for j in range(len(flux_array)):
@@ -568,9 +563,9 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_
 
     #STEP 6: downweight by the standard deviation
     downweighted = divideByStd(vert_sigma_clip)
-    downweighted[:, 507076:518200] = 1.0
+    #downweighted[:, 507076:518200] = 1.0 #sky emission line again
 
-    #make sure there are no nans
+    #make sure there are no nans (if nans you will get error in PCA step)
     for k in range(len(downweighted)):
         nans, x = nan_helper(downweighted[k])
         downweighted[k][nans] = np.interp(x(nans), x(~nans), downweighted[k][~nans])
@@ -582,14 +577,14 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_
     vert_sigma_clip2 = removeVertOutliers(pca_removed)
 
     #remove any shape that appeared in the areas with no data
-    vert_sigma_clip2[:, 507076:518200] = 1.0
-    vert_sigma_clip2[:, 582320:582360] = 1.0 #atm emission line
+    #vert_sigma_clip2[:, 507076:518200] = 1.0
+    #vert_sigma_clip2[:, 582320:582360] = 1.0 #atm emission line
 
     if plots == True: 
         colors = cm.RdPu_r(np.linspace(0,1,len(flux_array)))
         for j in range(len(flux_array)):
             plt.plot(vert_sigma_clip2[j], color = colors[j], alpha=alpha)
-            plt.title('final sig clip') 
+            plt.title('final-PCA removed') 
         plt.show()
 
 
@@ -635,8 +630,10 @@ def doTheReduction(wave_array, flux_array, model_atm_wave, model_atm_trans, pca_
     #return the normalized cc grid and the rv grid
     return rv_grid, cc_grid
 
-
+#################
+#make the 2d Kp versus Vsys plot like in lots of papers
 #find the best Vsys and Kp 
+#################
 def findKpVsys(rv_grid, cc_grid, Kp_orig, phases): 
 
     Kps = np.arange(Kp_orig + 80,-100, -2)
